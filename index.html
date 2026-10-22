@@ -1,0 +1,414 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Registro de fallas de equipos</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Public+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: formulario de ingreso arriba, bandeja de registros abajo con filtros por estado */
+:root {
+  --bg: #f3f5f7; --surface: #ffffff; --fg: #17212b; --muted: #5b6876; --line: #d8dee5;
+  --accent: #1f5f8b; --accent-fg: #ffffff;
+  --pend: #9a5b00; --pend-bg: #fdf0dc; --rep: #1f5f8b; --rep-bg: #e2eef7; --ok: #2c6e3f; --ok-bg: #e2f2e6;
+  --danger: #a3302a;
+  --font-body: "Public Sans", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #11171d; --surface: #1a222a; --fg: #e4e9ee; --muted: #9aa7b4; --line: #2c3742;
+  --accent: #6aa9d6; --accent-fg: #0d1419;
+  --pend: #f0b45a; --pend-bg: #3a2a12; --rep: #8cc0e6; --rep-bg: #18303f; --ok: #7cc893; --ok-bg: #173022;
+  --danger: #ef8a83; color-scheme: dark } }
+:root[data-theme="dark"] {
+  --bg: #11171d; --surface: #1a222a; --fg: #e4e9ee; --muted: #9aa7b4; --line: #2c3742;
+  --accent: #6aa9d6; --accent-fg: #0d1419;
+  --pend: #f0b45a; --pend-bg: #3a2a12; --rep: #8cc0e6; --rep-bg: #18303f; --ok: #7cc893; --ok-bg: #173022;
+  --danger: #ef8a83; color-scheme: dark }
+body { margin: 0; background: var(--bg); color: var(--fg); font-family: var(--font-body); font-size: 15px; line-height: 1.5; }
+.wrap { max-width: 1000px; margin: 0 auto; padding-block: 28px 48px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); display: grid; gap: 24px; }
+h1 { font-size: 1.6rem; margin: 0; text-wrap: balance; }
+h2 { font-size: 1.1rem; margin: 0; }
+.sub { color: var(--muted); margin: 4px 0 0; max-width: 65ch; }
+.panel { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 20px; display: grid; gap: 16px; min-width: 0; }
+form .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 14px; }
+label { display: grid; gap: 4px; font-size: .78rem; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); }
+input, select, textarea { font: inherit; font-size: .95rem; text-transform: none; letter-spacing: 0; color: var(--fg); background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; width: 100%; box-sizing: border-box; }
+textarea { min-height: 70px; resize: vertical; }
+.full { grid-column: 1 / -1; }
+input:focus-visible, select:focus-visible, textarea:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+button { font: inherit; font-weight: 600; font-size: .9rem; border-radius: 6px; padding: 8px 14px; cursor: pointer; border: 1px solid var(--line); background: var(--surface); color: var(--fg); }
+button.primary { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); }
+button.link { border: none; background: none; color: var(--danger); padding: 4px 6px; font-weight: 500; }
+button:disabled { opacity: .5; cursor: not-allowed; }
+.msg { font-size: .9rem; color: var(--muted); }
+.msg.err { color: var(--danger); }
+.summary { display: flex; flex-wrap: wrap; gap: 8px; }
+.chip { border: 1px solid var(--line); border-radius: 999px; padding: 5px 12px; font-size: .85rem; background: var(--surface); color: var(--fg); font-weight: 500; }
+.chip[aria-pressed="true"] { background: var(--fg); color: var(--bg); border-color: var(--fg); }
+.chip b { font-variant-numeric: tabular-nums; margin-left: 4px; }
+.list { display: grid; gap: 10px; }
+.item { border: 1px solid var(--line); border-radius: 8px; padding: 14px 16px; display: grid; gap: 8px; background: var(--surface); min-width: 0; }
+.item-head { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px; align-items: baseline; }
+.item-title { font-weight: 700; }
+.mono { font-family: var(--font-mono); font-size: .85rem; }
+.meta { display: flex; flex-wrap: wrap; gap: 4px 18px; color: var(--muted); font-size: .88rem; }
+.meta span b { color: var(--fg); font-weight: 600; }
+.falla { margin: 0; overflow-wrap: anywhere; }
+.status { font-size: .8rem; font-weight: 600; padding: 3px 8px; border-radius: 4px; border: none; }
+.st-pendiente { color: var(--pend); background: var(--pend-bg); }
+.st-reportado { color: var(--rep); background: var(--rep-bg); }
+.st-resuelto { color: var(--ok); background: var(--ok-bg); }
+.item-foot { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px; align-items: center; font-size: .85rem; color: var(--muted); }
+.empty { color: var(--muted); padding: 24px; text-align: center; border: 1px dashed var(--line); border-radius: 8px; }
+.confirm { display: inline-flex; gap: 6px; align-items: center; }
+.foto-field { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
+.foto-field input[type="file"] { flex: 1 1 220px; padding: 6px; }
+.thumb { width: 96px; height: 72px; object-fit: cover; border-radius: 6px; border: 1px solid var(--line); background: var(--bg); display: block; }
+.thumb-btn { padding: 0; border: none; background: none; cursor: zoom-in; flex: none; }
+.item-body { display: flex; gap: 14px; align-items: flex-start; min-width: 0; }
+.item-body > div { display: grid; gap: 8px; min-width: 0; flex: 1; }
+.nofoto { width: 96px; height: 72px; border-radius: 6px; border: 1px dashed var(--line); color: var(--muted); font-size: .72rem; display: grid; place-items: center; text-align: center; flex: none; }
+.lightbox { position: fixed; inset: 0; z-index: 20; background: rgba(8, 12, 16, .85); display: grid; place-items: center; padding: max(16px, env(safe-area-inset-top, 0px)) max(16px, env(safe-area-inset-right, 0px)) max(16px, env(safe-area-inset-bottom, 0px)) max(16px, env(safe-area-inset-left, 0px)); cursor: zoom-out; }
+.lightbox img { max-width: 100%; max-height: 90vh; border-radius: 6px; }
+pre.out { white-space: pre-wrap; background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 12px; font-family: var(--font-mono); font-size: .82rem; margin: 0; overflow-x: auto; }
+</style>
+<style>
+.topbar { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 12px; align-items: flex-start; }
+.userbar { display: flex; gap: 10px; align-items: center; color: var(--muted); font-size: .88rem; }
+.app { display: grid; gap: 24px; }
+[hidden] { display: none !important; }
+.login { max-width: 380px; width: 100%; justify-self: center; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="topbar">
+    <div>
+      <h1>Registro de fallas de equipos</h1>
+      <p class="sub">Ingrese cada equipo con falla una sola vez. La jefatura revisa los pendientes, redacta el correo a la empresa y marca el registro como reportado.</p>
+    </div>
+    <div class="userbar" id="userbar" hidden>
+      <span id="userEmail"></span>
+      <button type="button" id="logout">Cerrar sesión</button>
+    </div>
+  </header>
+
+  <section class="panel login" id="loginPanel" aria-labelledby="login-title" hidden>
+    <h2 id="login-title">Iniciar sesión</h2>
+    <form id="loginForm" novalidate>
+      <div class="grid" style="grid-template-columns:1fr">
+        <label for="email">Correo
+          <input id="email" type="email" autocomplete="username" required>
+        </label>
+        <label for="password">Contraseña
+          <input id="password" type="password" autocomplete="current-password" required>
+        </label>
+      </div>
+      <div class="row" style="margin-top:16px">
+        <button type="submit" class="primary" id="loginBtn">Entrar</button>
+        <span class="msg" id="loginMsg" role="status"></span>
+      </div>
+    </form>
+  </section>
+
+  <div id="app" class="app" hidden>
+  <section class="panel" aria-labelledby="f-title">
+    <h2 id="f-title">Nuevo registro</h2>
+    <form id="form" novalidate>
+      <div class="grid">
+        <label for="tipo">Tipo de equipo
+          <select id="tipo" required>
+            <option value="Impresora">Impresora</option>
+            <option value="Computador">Computador</option>
+            <option value="Anexo telefónico">Anexo telefónico</option>
+            <option value="Otro">Otro</option>
+          </select>
+        </label>
+        <label for="serie">N.º de serie
+          <input id="serie" required autocomplete="off" placeholder="Ej.: CNB8K12345">
+        </label>
+        <label for="modelo">Modelo
+          <input id="modelo" required autocomplete="off" placeholder="Ej.: HP LaserJet M404">
+        </label>
+        <label for="empresa">Empresa proveedora
+          <input id="empresa" required list="empresas" autocomplete="off" placeholder="Empresa a la que se reporta">
+          <datalist id="empresas"></datalist>
+        </label>
+        <label for="ubicacion" class="full">Ubicación física
+          <input id="ubicacion" required autocomplete="off" placeholder="Edificio, piso, oficina o box">
+        </label>
+        <label for="falla" class="full">Descripción de la falla
+          <textarea id="falla" required placeholder="Qué ocurre, desde cuándo, mensajes de error"></textarea>
+        </label>
+        <label for="foto" class="full">Foto de la falla (obligatoria)
+          <span class="foto-field">
+            <input id="foto" type="file" accept="image/*" capture="environment" required>
+            <img id="fotoPrev" class="thumb" alt="Vista previa de la foto" hidden>
+          </span>
+        </label>
+        <label for="informante">Informado por (opcional)
+          <input id="informante" autocomplete="off" placeholder="Nombre de quien detectó la falla">
+        </label>
+      </div>
+      <div class="row" style="margin-top:16px">
+        <button type="submit" class="primary" id="save">Guardar registro</button>
+        <span class="msg" id="formMsg" role="status"></span>
+      </div>
+    </form>
+  </section>
+
+  <section class="panel" aria-labelledby="l-title">
+    <div class="item-head">
+      <h2 id="l-title">Registros</h2>
+      <div class="row">
+        <button type="button" id="reloadBtn">Actualizar</button>
+        <button type="button" id="copyBtn">Copiar pendientes para correo</button>
+      </div>
+    </div>
+    <div class="summary" id="filters" role="group" aria-label="Filtrar por estado"></div>
+    <input id="search" type="search" placeholder="Buscar por serie, modelo, empresa o ubicación" aria-label="Buscar">
+    <pre class="out" id="copyOut" hidden></pre>
+    <div class="list" id="list"><div class="empty">Cargando registros…</div></div>
+  </section>
+  </div>
+</div>
+<div class="lightbox" id="lightbox" hidden><img id="lightImg" alt="Foto de la falla ampliada"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
+<script src="config.js"></script>
+<script>
+const ESTADOS = [
+  { id: "pendiente", label: "Pendiente de reportar" },
+  { id: "reportado", label: "Reportado a la empresa" },
+  { id: "resuelto", label: "Resuelto" }
+];
+const $ = (id) => document.getElementById(id);
+const cfg = window.REGISTRO_CONFIG || {};
+const sb = window.supabase.createClient(cfg.SUPABASE_URL, cfg.SUPABASE_ANON_KEY);
+let rows = [], filtro = "pendiente", confirmId = null, canal = null;
+const urlCache = {};
+
+const fmt = (iso) => {
+  if (!iso) return "";
+  const d = new Date(iso);
+  return d.toLocaleDateString("es-CL", { day: "2-digit", month: "2-digit", year: "numeric" }) + " " +
+         d.toLocaleTimeString("es-CL", { hour: "2-digit", minute: "2-digit" });
+};
+const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
+function alertMsg(t) { const m = $("formMsg"); m.textContent = t; m.className = "msg err"; }
+
+// ---------- Sesión ----------
+function mostrar(sesion) {
+  const ok = !!sesion;
+  $("loginPanel").hidden = ok;
+  $("app").hidden = !ok;
+  $("userbar").hidden = !ok;
+  if (ok) { $("userEmail").textContent = sesion.user.email; cargar(); suscribir(); }
+  else if (canal) { sb.removeChannel(canal); canal = null; }
+}
+
+$("loginForm").addEventListener("submit", async (ev) => {
+  ev.preventDefault();
+  const m = $("loginMsg"); m.className = "msg"; m.textContent = "Ingresando…";
+  $("loginBtn").disabled = true;
+  const { error } = await sb.auth.signInWithPassword({ email: $("email").value.trim(), password: $("password").value });
+  $("loginBtn").disabled = false;
+  if (error) { m.className = "msg err"; m.textContent = "Correo o contraseña incorrectos."; } else m.textContent = "";
+});
+$("logout").addEventListener("click", () => sb.auth.signOut());
+sb.auth.onAuthStateChange((evento, sesion) => {
+  if (evento === "INITIAL_SESSION" || evento === "SIGNED_IN" || evento === "SIGNED_OUT") mostrar(sesion);
+});
+
+// ---------- Datos ----------
+async function cargar() {
+  const { data, error } = await sb.from("reportes").select("*").order("creado", { ascending: false });
+  if (error) { $("list").textContent = ""; $("list").append(el("div", "empty", "No se pudieron cargar los registros: " + error.message)); return; }
+  rows = data;
+  const sinUrl = rows.map(r => r.foto).filter(p => p && !urlCache[p]);
+  if (sinUrl.length) {
+    const { data: firmadas } = await sb.storage.from("fotos").createSignedUrls(sinUrl, 60 * 60 * 8);
+    (firmadas || []).forEach(f => { if (f.signedUrl) urlCache[f.path] = f.signedUrl; });
+  }
+  render();
+}
+function suscribir() {
+  if (canal) return;
+  canal = sb.channel("reportes-cambios")
+    .on("postgres_changes", { event: "*", schema: "public", table: "reportes" }, () => cargar())
+    .subscribe();
+}
+$("reloadBtn").addEventListener("click", cargar);
+
+// Reduce la foto del celular a JPEG para que suba rápido.
+function comprimir(file, maxLado, calidad) {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      const k = Math.min(1, maxLado / Math.max(img.width, img.height));
+      const c = document.createElement("canvas");
+      c.width = Math.round(img.width * k); c.height = Math.round(img.height * k);
+      c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
+      URL.revokeObjectURL(url);
+      c.toBlob(b => b ? resolve(b) : reject(new Error("No se pudo procesar la imagen.")), "image/jpeg", calidad);
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error("El archivo no es una imagen válida.")); };
+    img.src = url;
+  });
+}
+
+// ---------- Vista ----------
+function renderFilters() {
+  const f = $("filters"); f.textContent = "";
+  for (const o of [{ id: "todos", label: "Todos" }, ...ESTADOS]) {
+    const n = o.id === "todos" ? rows.length : rows.filter(r => r.estado === o.id).length;
+    const b = el("button", "chip", o.label); b.type = "button";
+    b.setAttribute("aria-pressed", String(filtro === o.id));
+    b.append(el("b", null, String(n)));
+    b.onclick = () => { filtro = o.id; render(); };
+    f.append(b);
+  }
+}
+
+function render() {
+  renderFilters();
+  const dl = $("empresas"); dl.textContent = "";
+  [...new Set(rows.map(r => r.empresa).filter(Boolean))].sort().forEach(e => { const o = el("option"); o.value = e; dl.append(o); });
+
+  const q = $("search").value.trim().toLowerCase();
+  const vis = rows.filter(r => (filtro === "todos" || r.estado === filtro) &&
+    (!q || [r.serie, r.modelo, r.empresa, r.ubicacion, r.tipo, r.falla].join(" ").toLowerCase().includes(q)));
+  const list = $("list"); list.textContent = "";
+  if (!vis.length) {
+    list.append(el("div", "empty", rows.length ? "No hay registros con este filtro." : "Aún no hay registros. Complete el formulario de arriba para ingresar el primer equipo con falla."));
+    return;
+  }
+  for (const r of vis) {
+    const it = el("article", "item");
+    const head = el("div", "item-head");
+    const t = el("div"); t.append(el("span", "item-title", `${r.tipo} · ${r.modelo}`), document.createTextNode("  "), el("span", "mono", r.serie));
+    const sel = el("select", "status st-" + r.estado); sel.setAttribute("aria-label", "Estado");
+    ESTADOS.forEach(s => { const o = el("option", null, s.label); o.value = s.id; if (s.id === r.estado) o.selected = true; sel.append(o); });
+    sel.onchange = () => cambiarEstado(r, sel.value);
+    head.append(t, sel);
+
+    const meta = el("div", "meta");
+    const m = (k, v) => { const s = el("span"); s.append(document.createTextNode(k + ": "), el("b", null, v)); return s; };
+    meta.append(m("Empresa", r.empresa), m("Ubicación", r.ubicacion));
+    if (r.informante) meta.append(m("Informado por", r.informante));
+
+    const body = el("div", "item-body");
+    const src = urlCache[r.foto];
+    if (src) {
+      const b = el("button", "thumb-btn"); b.type = "button"; b.setAttribute("aria-label", "Ver foto ampliada");
+      const im = el("img", "thumb"); im.alt = "Foto de la falla"; im.loading = "lazy"; im.src = src;
+      im.onerror = () => b.replaceWith(el("div", "nofoto", "Foto no disponible"));
+      b.append(im); b.onclick = () => abrirFoto(src);
+      body.append(b);
+    } else body.append(el("div", "nofoto", "Sin foto"));
+    const info = el("div"); info.append(meta, el("p", "falla", r.falla));
+    body.append(info);
+
+    const foot = el("div", "item-foot");
+    let txt = "Registrado el " + fmt(r.creado);
+    if (r.reportado_el) txt += " · Reportado el " + fmt(r.reportado_el);
+    if (r.resuelto_el) txt += " · Resuelto el " + fmt(r.resuelto_el);
+    foot.append(el("span", null, txt));
+    if (confirmId === r.id) {
+      const c = el("span", "confirm"); c.append(document.createTextNode("¿Eliminar este registro?"));
+      const y = el("button", "link", "Sí, eliminar"); y.type = "button"; y.onclick = () => eliminar(r);
+      const n = el("button", null, "Cancelar"); n.type = "button"; n.onclick = () => { confirmId = null; render(); };
+      c.append(y, n); foot.append(c);
+    } else {
+      const d = el("button", "link", "Eliminar"); d.type = "button"; d.onclick = () => { confirmId = r.id; render(); };
+      foot.append(d);
+    }
+    it.append(head, body, foot);
+    list.append(it);
+  }
+}
+
+function abrirFoto(src) { $("lightImg").src = src; $("lightbox").hidden = false; }
+$("lightbox").addEventListener("click", () => { $("lightbox").hidden = true; });
+document.addEventListener("keydown", e => { if (e.key === "Escape") $("lightbox").hidden = true; });
+$("search").addEventListener("input", render);
+
+$("foto").addEventListener("change", () => {
+  const f = $("foto").files[0], p = $("fotoPrev");
+  if (p.src.startsWith("blob:")) URL.revokeObjectURL(p.src);
+  if (f) { p.src = URL.createObjectURL(f); p.hidden = false; } else { p.hidden = true; p.removeAttribute("src"); }
+});
+
+// ---------- Acciones ----------
+async function cambiarEstado(r, estado) {
+  const ahora = new Date().toISOString();
+  const patch = { estado };
+  if (estado === "pendiente") { patch.reportado_el = null; patch.resuelto_el = null; }
+  if (estado === "reportado") { patch.reportado_el = r.reportado_el || ahora; patch.resuelto_el = null; }
+  if (estado === "resuelto") { patch.resuelto_el = ahora; patch.reportado_el = r.reportado_el || ahora; }
+  const { error } = await sb.from("reportes").update(patch).eq("id", r.id);
+  if (error) alertMsg("No se pudo cambiar el estado: " + error.message);
+  cargar();
+}
+
+async function eliminar(r) {
+  confirmId = null;
+  const { error } = await sb.from("reportes").delete().eq("id", r.id);
+  if (error) { alertMsg("No se pudo eliminar: " + error.message); return; }
+  if (r.foto) await sb.storage.from("fotos").remove([r.foto]);
+  cargar();
+}
+
+$("form").addEventListener("submit", async (ev) => {
+  ev.preventDefault();
+  const m = $("formMsg"); m.className = "msg";
+  const data = {};
+  for (const k of ["tipo", "serie", "modelo", "empresa", "ubicacion", "falla", "informante"]) data[k] = $(k).value.trim();
+  const falta = ["serie", "modelo", "empresa", "ubicacion", "falla"].filter(k => !data[k]);
+  if (falta.length) { alertMsg("Complete los campos obligatorios: serie, modelo, empresa, ubicación y falla."); $(falta[0]).focus(); return; }
+  const file = $("foto").files[0];
+  if (!file) { alertMsg("Adjunte una foto de la falla antes de guardar."); $("foto").focus(); return; }
+  const dup = rows.find(r => r.estado !== "resuelto" && r.serie.toLowerCase() === data.serie.toLowerCase());
+  if (!data.informante) data.informante = null;
+
+  $("save").disabled = true; m.textContent = "Subiendo foto…";
+  try {
+    const blob = await comprimir(file, 1600, 0.82);
+    const ruta = `${new Date().toISOString().slice(0, 10)}/${crypto.randomUUID()}.jpg`;
+    const up = await sb.storage.from("fotos").upload(ruta, blob, { contentType: "image/jpeg" });
+    if (up.error) throw up.error;
+    data.foto = ruta;
+    const { error } = await sb.from("reportes").insert(data);
+    if (error) { await sb.storage.from("fotos").remove([ruta]); throw error; }
+    ["serie", "modelo", "ubicacion", "falla", "informante", "foto"].forEach(k => $(k).value = "");
+    $("fotoPrev").hidden = true;
+    m.textContent = dup ? "Registro guardado. Atención: ya existe otro registro abierto con la misma serie." : "Registro guardado.";
+    cargar();
+  } catch (e) {
+    alertMsg("No se pudo guardar: " + (e.message || e));
+  } finally { $("save").disabled = false; }
+});
+
+$("copyBtn").addEventListener("click", async () => {
+  const pend = rows.filter(r => r.estado === "pendiente");
+  const out = $("copyOut");
+  out.hidden = false;
+  if (!pend.length) { out.textContent = "No hay registros pendientes de reportar."; return; }
+  const porEmpresa = {};
+  pend.forEach(r => (porEmpresa[r.empresa] ||= []).push(r));
+  let txt = "";
+  for (const [emp, lista] of Object.entries(porEmpresa)) {
+    txt += `EMPRESA: ${emp}\n`;
+    lista.forEach((r, i) => { txt += `${i + 1}. ${r.tipo} ${r.modelo} — Serie: ${r.serie}\n   Ubicación: ${r.ubicacion}\n   Falla: ${r.falla}\n`; });
+    txt += "\n";
+  }
+  out.textContent = txt.trim();
+  try { await navigator.clipboard.writeText(out.textContent); $("copyBtn").textContent = "Copiado"; setTimeout(() => $("copyBtn").textContent = "Copiar pendientes para correo", 1800); }
+  catch { const s = window.getSelection(), rg = document.createRange(); rg.selectNodeContents(out); s.removeAllRanges(); s.addRange(rg); }
+});
+</script>
+</body>
+</html>
