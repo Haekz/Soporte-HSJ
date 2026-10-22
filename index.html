@@ -99,8 +99,8 @@ pre.out { white-space: pre-wrap; background: var(--bg); border: 1px solid var(--
     <h2 id="login-title">Iniciar sesión</h2>
     <form id="loginForm" novalidate>
       <div class="grid" style="grid-template-columns:1fr">
-        <label for="email">Correo
-          <input id="email" type="email" autocomplete="username" required>
+        <label for="email">Usuario o correo
+          <input id="email" type="text" autocomplete="username" autocapitalize="none" spellcheck="false" placeholder="nombre.apellido" required>
         </label>
         <label for="password">Contraseña
           <input id="password" type="password" autocomplete="current-password" required>
@@ -213,7 +213,10 @@ $("loginForm").addEventListener("submit", async (ev) => {
   ev.preventDefault();
   const m = $("loginMsg"); m.className = "msg"; m.textContent = "Ingresando…";
   $("loginBtn").disabled = true;
-  const { error } = await sb.auth.signInWithPassword({ email: $("email").value.trim(), password: $("password").value });
+  // Si se escribe solo el usuario (sin @), se completa con el dominio de config.js.
+  let usuario = $("email").value.trim().toLowerCase();
+  if (usuario && !usuario.includes("@") && cfg.DOMINIO_CORREO) usuario += "@" + cfg.DOMINIO_CORREO.replace(/^@/, "");
+  const { error } = await sb.auth.signInWithPassword({ email: usuario, password: $("password").value });
   $("loginBtn").disabled = false;
   if (error) { m.className = "msg err"; m.textContent = "Correo o contraseña incorrectos."; } else m.textContent = "";
 });
