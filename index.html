@@ -80,6 +80,24 @@ pre.out { white-space: pre-wrap; background: var(--bg); border: 1px solid var(--
 .app { display: grid; gap: 24px; }
 [hidden] { display: none !important; }
 .login { max-width: 380px; width: 100%; justify-self: center; }
+/* Chat guiado */
+.modo { display: flex; gap: 8px; flex-wrap: wrap; }
+.chat { display: grid; gap: 10px; max-height: 460px; overflow-y: auto; padding: 4px 2px; overscroll-behavior: contain; }
+.burb { max-width: min(85%, 560px); padding: 9px 13px; border-radius: 14px; overflow-wrap: anywhere; white-space: pre-line; }
+.burb.bot { justify-self: start; background: var(--bg); border: 1px solid var(--line); border-bottom-left-radius: 4px; }
+.burb.yo { justify-self: end; background: var(--accent); color: var(--accent-fg); border-bottom-right-radius: 4px; }
+.burb.aviso { border-color: var(--pend); background: var(--pend-bg); }
+.burb.exito { border-color: var(--ok); background: var(--ok-bg); }
+.burb img { display: block; max-width: 180px; max-height: 140px; border-radius: 8px; object-fit: cover; }
+.burb dl { margin: 6px 0 0; display: grid; grid-template-columns: auto 1fr; gap: 2px 10px; }
+.burb dt { color: var(--muted); font-size: .85rem; }
+.burb dd { margin: 0; font-weight: 600; }
+.chat-in { display: grid; gap: 10px; border-top: 1px solid var(--line); padding-top: 14px; }
+.opciones { display: flex; flex-wrap: wrap; gap: 8px; }
+.opciones button { border-radius: 999px; }
+.enviar { display: flex; gap: 8px; align-items: flex-end; }
+.enviar input, .enviar textarea { flex: 1; min-width: 0; }
+.enviar textarea { min-height: 44px; }
 </style>
 </head>
 <body>
@@ -115,8 +133,18 @@ pre.out { white-space: pre-wrap; background: var(--bg); border: 1px solid var(--
 
   <div id="app" class="app" hidden>
   <section class="panel" aria-labelledby="f-title">
-    <h2 id="f-title">Nuevo registro</h2>
-    <form id="form" novalidate>
+    <div class="item-head">
+      <h2 id="f-title">Nuevo registro</h2>
+      <div class="modo" role="group" aria-label="Forma de ingreso">
+        <button type="button" class="chip" id="modoChat" aria-pressed="true">Chat guiado</button>
+        <button type="button" class="chip" id="modoForm" aria-pressed="false">Formulario</button>
+      </div>
+    </div>
+    <div id="chatBox" class="app" style="gap:14px">
+      <div class="chat" id="chat" aria-live="polite" aria-label="Conversación de reporte"></div>
+      <div class="chat-in" id="chatIn"></div>
+    </div>
+    <form id="form" novalidate hidden>
       <div class="grid">
         <label for="tipo">Tipo de equipo
           <select id="tipo" required>
@@ -187,7 +215,7 @@ const ESTADOS = [
 const $ = (id) => document.getElementById(id);
 const cfg = window.REGISTRO_CONFIG || {};
 const sb = window.supabase.createClient(cfg.SUPABASE_URL, cfg.SUPABASE_ANON_KEY);
-let rows = [], filtro = "pendiente", confirmId = null, canal = null;
+let rows = [], filtro = "pendiente", confirmId = null, canal = null, chatIniciado = false;
 const urlCache = {};
 
 const fmt = (iso) => {
@@ -205,7 +233,7 @@ function mostrar(sesion) {
   $("loginPanel").hidden = ok;
   $("app").hidden = !ok;
   $("userbar").hidden = !ok;
-  if (ok) { $("userEmail").textContent = sesion.user.email; cargar(); suscribir(); }
+  if (ok) { $("userEmail").textContent = sesion.user.email; cargar().then(() => { if (!chatIniciado) iniciarChat(); }); suscribir(); }
   else if (canal) { sb.removeChannel(canal); canal = null; }
 }
 
@@ -365,6 +393,18 @@ async function eliminar(r) {
   cargar();
 }
 
+// Sube la foto y guarda el reporte. Lo usan el formulario y el chat.
+async function guardarReporte(data, file) {
+  const blob = await comprimir(file, 1600, 0.82);
+  const ruta = `${new Date().toISOString().slice(0, 10)}/${crypto.randomUUID()}.jpg`;
+  const up = await sb.storage.from("fotos").upload(ruta, blob, { contentType: "image/jpeg" });
+  if (up.error) throw up.error;
+  const { error } = await sb.from("reportes").insert({ ...data, foto: ruta });
+  if (error) { await sb.storage.from("fotos").remove([ruta]); throw error; }
+  cargar();
+}
+const abiertoConSerie = (serie) => rows.find(r => r.estado !== "resuelto" && r.serie.toLowerCase() === serie.toLowerCase());
+
 $("form").addEventListener("submit", async (ev) => {
   ev.preventDefault();
   const m = $("formMsg"); m.className = "msg";
@@ -374,26 +414,164 @@ $("form").addEventListener("submit", async (ev) => {
   if (falta.length) { alertMsg("Complete los campos obligatorios: serie, modelo, empresa, ubicación y falla."); $(falta[0]).focus(); return; }
   const file = $("foto").files[0];
   if (!file) { alertMsg("Adjunte una foto de la falla antes de guardar."); $("foto").focus(); return; }
-  const dup = rows.find(r => r.estado !== "resuelto" && r.serie.toLowerCase() === data.serie.toLowerCase());
+  const dup = abiertoConSerie(data.serie);
   if (!data.informante) data.informante = null;
 
   $("save").disabled = true; m.textContent = "Subiendo foto…";
   try {
-    const blob = await comprimir(file, 1600, 0.82);
-    const ruta = `${new Date().toISOString().slice(0, 10)}/${crypto.randomUUID()}.jpg`;
-    const up = await sb.storage.from("fotos").upload(ruta, blob, { contentType: "image/jpeg" });
-    if (up.error) throw up.error;
-    data.foto = ruta;
-    const { error } = await sb.from("reportes").insert(data);
-    if (error) { await sb.storage.from("fotos").remove([ruta]); throw error; }
+    await guardarReporte(data, file);
     ["serie", "modelo", "ubicacion", "falla", "informante", "foto"].forEach(k => $(k).value = "");
     $("fotoPrev").hidden = true;
     m.textContent = dup ? "Registro guardado. Atención: ya existe otro registro abierto con la misma serie." : "Registro guardado.";
-    cargar();
   } catch (e) {
     alertMsg("No se pudo guardar: " + (e.message || e));
   } finally { $("save").disabled = false; }
 });
+
+// ---------- Chat guiado ----------
+const ESTADO_TXT = { pendiente: "pendiente de reportar", reportado: "ya reportado a la empresa", resuelto: "resuelto" };
+let ch = {}, fotoChat = null, guardando = false;
+
+function burb(tipo, contenido, extra) {
+  const b = el("div", "burb " + tipo + (extra ? " " + extra : ""));
+  if (typeof contenido === "string") b.textContent = contenido; else b.append(contenido);
+  $("chat").append(b);
+  $("chat").scrollTop = $("chat").scrollHeight;
+  return b;
+}
+const bot = (t, extra) => burb("bot", t, extra);
+const yo = (t) => burb("yo", t);
+function entrada(...nodos) { const c = $("chatIn"); c.textContent = ""; c.append(...nodos); }
+function opciones(lista) {
+  const d = el("div", "opciones");
+  lista.forEach(o => { const b = el("button", o.primario ? "primary" : null, o.t); b.type = "button"; b.onclick = o.f; d.append(b); });
+  return d;
+}
+// Responder con un botón: muestra la respuesta como mensaje del usuario y sigue.
+const resp = (t, f, primario) => ({ t, primario, f: () => { yo(t); f(); } });
+
+function pedirTexto({ ph, multi, sugerencias, opcional, onOk }) {
+  const f = el("form", "enviar");
+  const i = el(multi ? "textarea" : "input");
+  i.placeholder = ph || "Escriba aquí"; i.autocomplete = "off"; i.setAttribute("aria-label", ph || "Respuesta");
+  if (sugerencias) i.setAttribute("list", "empresas");
+  const b = el("button", "primary", "Enviar"); b.type = "submit";
+  f.append(i, b);
+  f.onsubmit = (e) => { e.preventDefault(); const v = i.value.trim(); if (!v) { i.focus(); return; } yo(v); onOk(v); };
+  if (multi) i.addEventListener("keydown", e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); f.requestSubmit(); } });
+  const nodos = [];
+  if (sugerencias && sugerencias.length) nodos.push(opciones(sugerencias.map(s => resp(s, () => onOk(s)))));
+  if (opcional) nodos.push(opciones([resp("Omitir", () => onOk(""))]));
+  nodos.push(f);
+  entrada(...nodos);
+  setTimeout(() => i.focus({ preventScroll: true }), 0);
+}
+
+function iniciarChat() {
+  chatIniciado = true; ch = {}; fotoChat = null;
+  $("chat").textContent = "";
+  bot("Hola. Le ayudaré a registrar un equipo con falla. Son unas pocas preguntas breves.");
+  pasoTipo();
+}
+function pasoTipo() {
+  bot("¿Qué tipo de equipo presenta la falla?");
+  entrada(opciones(["Impresora", "Computador", "Anexo telefónico", "Otro"].map(t => resp(t, () => { ch.tipo = t; pasoSerie(); }))));
+}
+function pasoSerie() {
+  bot("Indique el número de serie. Normalmente está en una etiqueta en la parte trasera o inferior del equipo.");
+  pedirTexto({ ph: "Ej.: CNB8K12345", onOk: v => { ch.serie = v; revisarSerie(); } });
+}
+function revisarSerie() {
+  const dup = abiertoConSerie(ch.serie);
+  if (!dup) return ofrecerAnteriores();
+  bot(`Atención: este equipo ya tiene un registro ${ESTADO_TXT[dup.estado]}, desde el ${fmt(dup.creado)}\nFalla registrada: ${dup.falla}`, "aviso");
+  bot("Si se trata de la misma falla, no es necesario reportarla de nuevo.");
+  entrada(opciones([
+    { t: "Ver ese registro", f: () => verRegistro(ch.serie) },
+    resp("Es otra falla, continuar", ofrecerAnteriores),
+    resp("Cancelar", iniciarChat)
+  ]));
+}
+function verRegistro(serie) {
+  filtro = "todos"; $("search").value = serie; render();
+  $("l-title").scrollIntoView({ behavior: "smooth" });
+}
+function ofrecerAnteriores() {
+  const prev = rows.find(r => r.serie.toLowerCase() === ch.serie.toLowerCase());
+  if (!prev) return pasoModelo();
+  bot(`Encontré datos anteriores de este equipo:\nModelo: ${prev.modelo}\nEmpresa: ${prev.empresa}\nUbicación: ${prev.ubicacion}\n¿Desea usarlos?`);
+  entrada(opciones([
+    resp("Sí, usar estos datos", () => { Object.assign(ch, { modelo: prev.modelo, empresa: prev.empresa, ubicacion: prev.ubicacion }); pasoFalla(); }, true),
+    resp("No, ingresar otros", pasoModelo)
+  ]));
+}
+function pasoModelo() {
+  bot("¿Cuál es el modelo del equipo?");
+  pedirTexto({ ph: "Ej.: HP LaserJet M404", onOk: v => { ch.modelo = v; pasoEmpresa(); } });
+}
+function pasoEmpresa() {
+  const emps = [...new Set(rows.map(r => r.empresa).filter(Boolean))].sort().slice(0, 8);
+  bot(emps.length ? "¿A qué empresa proveedora se reporta? Elija una de la lista o escriba otra." : "¿A qué empresa proveedora se reporta?");
+  pedirTexto({ ph: "Nombre de la empresa", sugerencias: emps, onOk: v => { ch.empresa = v; pasoUbicacion(); } });
+}
+function pasoUbicacion() {
+  bot("¿Dónde está el equipo? Indique edificio, piso, oficina o box.");
+  pedirTexto({ ph: "Ubicación física", onOk: v => { ch.ubicacion = v; pasoFalla(); } });
+}
+function pasoFalla() {
+  bot("Describa la falla: qué ocurre, desde cuándo y si muestra algún mensaje de error.");
+  pedirTexto({ ph: "Descripción de la falla", multi: true, onOk: v => { ch.falla = v; pasoFoto(); } });
+}
+function pasoFoto() {
+  bot("Adjunte una foto de la falla o del equipo. Es obligatoria.");
+  const inp = el("input"); inp.type = "file"; inp.accept = "image/*"; inp.hidden = true;
+  const b = el("button", "primary", "Tomar o elegir foto"); b.type = "button"; b.onclick = () => inp.click();
+  inp.onchange = () => {
+    const f = inp.files[0]; if (!f) return;
+    if (!f.type.startsWith("image/")) { bot("El archivo no es una imagen. Intente nuevamente.", "aviso"); return; }
+    fotoChat = f;
+    const im = el("img"); im.alt = "Foto adjunta"; im.src = URL.createObjectURL(f);
+    burb("yo", im);
+    pasoInformante();
+  };
+  entrada(opciones([{ t: b.textContent, primario: true, f: b.onclick }]), inp);
+}
+function pasoInformante() {
+  bot("¿Quién detectó la falla? Es opcional.");
+  pedirTexto({ ph: "Nombre", opcional: true, onOk: v => { ch.informante = v || null; resumen(); } });
+}
+function resumen() {
+  const dl = el("dl");
+  [["Tipo", ch.tipo], ["Serie", ch.serie], ["Modelo", ch.modelo], ["Empresa", ch.empresa], ["Ubicación", ch.ubicacion],
+   ["Falla", ch.falla], ["Informado por", ch.informante || "No indicado"]].forEach(([k, v]) => dl.append(el("dt", null, k), el("dd", null, v)));
+  const c = el("div"); c.append(document.createTextNode("Revise el resumen antes de guardar:"), dl);
+  bot(c);
+  entrada(opciones([{ t: "Guardar reporte", primario: true, f: enviarChat }, resp("Empezar de nuevo", iniciarChat)]));
+}
+async function enviarChat() {
+  if (guardando) return;
+  guardando = true;
+  entrada(el("span", "msg", "Guardando reporte…"));
+  try {
+    await guardarReporte({ ...ch }, fotoChat);
+    bot(`Reporte guardado como "pendiente de reportar". La jefatura lo verá en la lista y lo informará a ${ch.empresa}.`, "exito");
+    entrada(opciones([{ t: "Reportar otro equipo", primario: true, f: iniciarChat }]));
+  } catch (e) {
+    bot("No se pudo guardar: " + (e.message || e) + ". Puede intentarlo de nuevo.", "aviso");
+    entrada(opciones([{ t: "Reintentar", primario: true, f: enviarChat }, resp("Empezar de nuevo", iniciarChat)]));
+  } finally { guardando = false; }
+}
+
+// Cambio entre chat y formulario (se recuerda en este navegador).
+function modoIngreso(chat) {
+  $("chatBox").hidden = !chat; $("form").hidden = chat;
+  $("modoChat").setAttribute("aria-pressed", String(chat));
+  $("modoForm").setAttribute("aria-pressed", String(!chat));
+  try { localStorage.setItem("modoIngreso", chat ? "chat" : "form"); } catch {}
+}
+$("modoChat").addEventListener("click", () => modoIngreso(true));
+$("modoForm").addEventListener("click", () => modoIngreso(false));
+{ let m = null; try { m = localStorage.getItem("modoIngreso"); } catch {} modoIngreso(m !== "form"); }
 
 $("copyBtn").addEventListener("click", async () => {
   const pend = rows.filter(r => r.estado === "pendiente");
