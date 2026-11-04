@@ -215,7 +215,7 @@ const ESTADOS = [
 const $ = (id) => document.getElementById(id);
 const cfg = window.REGISTRO_CONFIG || {};
 const sb = window.supabase.createClient(cfg.SUPABASE_URL, cfg.SUPABASE_ANON_KEY);
-let rows = [], filtro = "pendiente", confirmId = null, canal = null, chatIniciado = false;
+let rows = [], inventario = [], filtro = "pendiente", confirmId = null, canal = null, chatIniciado = false;
 const urlCache = {};
 
 const fmt = (iso) => {
@@ -233,7 +233,7 @@ function mostrar(sesion) {
   $("loginPanel").hidden = ok;
   $("app").hidden = !ok;
   $("userbar").hidden = !ok;
-  if (ok) { $("userEmail").textContent = sesion.user.email; cargar().then(() => { if (!chatIniciado) iniciarChat(); }); suscribir(); }
+  if (ok) { $("userEmail").textContent = sesion.user.email; cargarInventario(); cargar().then(() => { if (!chatIniciado) iniciarChat(); }); suscribir(); }
   else if (canal) { sb.removeChannel(canal); canal = null; }
 }
 
@@ -264,6 +264,19 @@ async function cargar() {
     (firmadas || []).forEach(f => { if (f.signedUrl) urlCache[f.path] = f.signedUrl; });
   }
   render();
+}
+// Inventario de equipos (tabla "equipos"). Si la tabla no existe, el chat funciona igual sin inventario.
+async function cargarInventario() {
+  const todos = [];
+  try {
+    for (let desde = 0; ; desde += 1000) {
+      const { data, error } = await sb.from("equipos").select("*").range(desde, desde + 999);
+      if (error || !data) break;
+      todos.push(...data);
+      if (data.length < 1000) break;
+    }
+  } catch {}
+  inventario = todos;
 }
 function suscribir() {
   if (canal) return;
@@ -367,6 +380,20 @@ $("lightbox").addEventListener("click", () => { $("lightbox").hidden = true; });
 document.addEventListener("keydown", e => { if (e.key === "Escape") $("lightbox").hidden = true; });
 $("search").addEventListener("input", render);
 
+// Formulario: al escribir una serie del inventario, completa los campos vacíos.
+$("serie").addEventListener("change", () => {
+  if (!inventario.length) return;
+  const { exacto } = buscarEnInventario($("serie").value);
+  if (!exacto) return;
+  $("serie").value = exacto.serie;
+  const modelo = [exacto.marca, exacto.modelo].filter(Boolean).join(" ").trim();
+  if (modelo && !$("modelo").value) $("modelo").value = modelo;
+  if (exacto.empresa && !$("empresa").value) $("empresa").value = exacto.empresa;
+  if (exacto.ubicacion && !$("ubicacion").value) $("ubicacion").value = exacto.ubicacion;
+  if (exacto.tipo && [...$("tipo").options].some(op => op.value === exacto.tipo)) $("tipo").value = exacto.tipo;
+  const m = $("formMsg"); m.className = "msg"; m.textContent = "Datos completados desde el inventario. Revíselos antes de guardar.";
+});
+
 $("foto").addEventListener("change", () => {
   const f = $("foto").files[0], p = $("fotoPrev");
   if (p.src.startsWith("blob:")) URL.revokeObjectURL(p.src);
@@ -403,7 +430,43 @@ async function guardarReporte(data, file) {
   if (error) { await sb.storage.from("fotos").remove([ruta]); throw error; }
   cargar();
 }
-const abiertoConSerie = (serie) => rows.find(r => r.estado !== "resuelto" && r.serie.toLowerCase() === serie.toLowerCase());
+// Normaliza una serie para comparar: mayúsculas, sin espacios ni guiones.
+const normSerie = (s) => String(s || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+// Para coincidencias aproximadas, además trata como iguales O/0 e I/1 (errores comunes al escribir o leer).
+const normSuave = (s) => normSerie(s).replace(/O/g, "0").replace(/I/g, "1");
+const abiertoConSerie = (serie) => rows.find(r => r.estado !== "resuelto" && normSerie(r.serie) === normSerie(serie));
+function distancia(a, b) {
+  const v = Array.from({ length: b.length + 1 }, (_, j) => j);
+  for (let i = 1; i <= a.length; i++) {
+    let prev = v[0]; v[0] = i;
+    for (let j = 1; j <= b.length; j++) {
+      const t = v[j];
+      v[j] = Math.min(v[j] + 1, v[j - 1] + 1, prev + (a[i - 1] === b[j - 1] ? 0 : 1));
+      prev = t;
+    }
+  }
+  return v[b.length];
+}
+// Devuelve { exacto } o { parecidos: [...] } (máximo 3), según el inventario.
+function buscarEnInventario(serie) {
+  const n = normSerie(serie), ns = normSuave(serie);
+  if (!n) return { parecidos: [] };
+  // Cada equipo puede tener dos series (por ejemplo, la de Samsung y la de HP en la misma impresora).
+  const series = (e) => [e.serie, e.serie_alt].filter(Boolean);
+  const exacto = inventario.find(e => series(e).some(x => normSerie(x) === n)) || inventario.find(e => series(e).some(x => normSuave(x) === ns));
+  if (exacto) return { exacto };
+  const tope = Math.max(1, Math.floor(ns.length / 4));
+  const parecidos = inventario.map(e => {
+    let d = Infinity;
+    for (const x of series(e)) {
+      const es = normSuave(x);
+      d = Math.min(d, distancia(ns, es));
+      if (ns.length >= 5 && (es.includes(ns) || ns.includes(es))) d = Math.min(d, 1);
+    }
+    return { e, d };
+  }).filter(x => x.d <= tope).sort((a, b) => a.d - b.d).slice(0, 3).map(x => x.e);
+  return { parecidos };
+}
 
 $("form").addEventListener("submit", async (ev) => {
   ev.preventDefault();
@@ -478,10 +541,85 @@ function pasoTipo() {
   entrada(opciones(["Impresora", "Computador", "Anexo telefónico", "Otro"].map(t => resp(t, () => { ch.tipo = t; pasoSerie(); }))));
 }
 function pasoSerie() {
-  bot("Indique el número de serie. Normalmente está en una etiqueta en la parte trasera o inferior del equipo.");
+  bot("Indique el número de serie. Normalmente está en una etiqueta en la parte trasera o inferior del equipo. Si la etiqueta tiene código de barras, puede escanearlo.");
+  pedirSerie();
+}
+function pedirSerie() {
   pedirTexto({ ph: "Ej.: CNB8K12345", onOk: v => { ch.serie = v; revisarSerie(); } });
+  const inp = el("input"); inp.type = "file"; inp.accept = "image/*"; inp.hidden = true;
+  inp.onchange = () => { if (inp.files[0]) escanear(inp.files[0]); };
+  $("chatIn").prepend(opciones([{ t: "Escanear código de barras", primario: true, f: () => inp.click() }]), inp);
+}
+
+// ---------- Lectura de código de barras desde una foto ----------
+let zxingCarga = null;
+function cargarZXing() {
+  if (window.ZXingBrowser) return Promise.resolve();
+  return zxingCarga ||= new Promise((ok, mal) => {
+    const sc = document.createElement("script");
+    sc.src = "https://cdn.jsdelivr.net/npm/@zxing/browser@0.1.5/umd/zxing-browser.min.js";
+    sc.onload = ok; sc.onerror = () => { zxingCarga = null; mal(new Error("No se pudo cargar el lector.")); };
+    document.head.append(sc);
+  });
+}
+async function leerCodigos(file) {
+  const blob = await comprimir(file, 2000, 0.92);
+  if ("BarcodeDetector" in window) {
+    try {
+      const r = await new BarcodeDetector().detect(await createImageBitmap(blob));
+      if (r.length) return [...new Set(r.map(x => x.rawValue.trim()).filter(Boolean))];
+    } catch {}
+  }
+  await cargarZXing();
+  const url = URL.createObjectURL(blob);
+  try { const res = await new ZXingBrowser.BrowserMultiFormatReader().decodeFromImageUrl(url); return [res.getText().trim()]; }
+  catch { return []; }
+  finally { URL.revokeObjectURL(url); }
+}
+async function escanear(file) {
+  const im = el("img"); im.alt = "Foto de la etiqueta"; im.src = URL.createObjectURL(file);
+  burb("yo", im);
+  entrada(el("span", "msg", "Leyendo el código de barras…"));
+  let codigos = [];
+  try { codigos = await leerCodigos(file); } catch {}
+  if (!codigos.length) {
+    bot("No pude leer el código de barras. Intente con otra foto más cerca y con buena luz, o escriba la serie.", "aviso");
+    return pedirSerie();
+  }
+  bot(codigos.length === 1 ? `Leí este código: ${codigos[0]}
+¿Es el número de serie?` : "Encontré varios códigos. Elija cuál es el número de serie:");
+  entrada(opciones([
+    ...codigos.map(c => resp(c, () => { ch.serie = c; revisarSerie(); }, codigos.length === 1)),
+    resp(codigos.length === 1 ? "No, escribirla" : "Ninguno, escribirla", () => { bot("Escriba el número de serie."); pedirSerie(); })
+  ]));
 }
 function revisarSerie() {
+  if (!inventario.length) return revisarDuplicado();
+  const { exacto, parecidos } = buscarEnInventario(ch.serie);
+  if (exacto) return usarInventario(exacto);
+  if (parecidos.length) {
+    bot("No encontré esa serie exacta en el inventario. ¿Es alguna de estas?");
+    entrada(opciones([
+      ...parecidos.map(e => resp(`${e.serie} · ${[e.marca, e.modelo].filter(Boolean).join(" ")}`.replace(/ · $/, ""), () => usarInventario(e))),
+      resp(`Ninguna, usar ${ch.serie}`, () => revisarDuplicado())
+    ]));
+    return;
+  }
+  bot("Esta serie no está en el inventario. Continuemos con los datos del equipo.");
+  revisarDuplicado();
+}
+function usarInventario(e) {
+  ch.serie = e.serie;
+  const modelo = [e.marca, e.modelo].filter(Boolean).join(" ").trim();
+  if (modelo) ch.modelo = modelo;
+  if (e.empresa) ch.empresa = e.empresa;
+  if (e.ubicacion) ch.ubicacion = e.ubicacion;
+  const lineas = [["Serie", e.serie], ["Modelo", modelo], ["Empresa", e.empresa], ["Ubicación", e.ubicacion]].filter(([, x]) => x);
+  bot("Equipo encontrado en el inventario:\n" + lineas.map(([k, x]) => `${k}: ${x}`).join("\n"));
+  ch.desdeInventario = true;
+  revisarDuplicado();
+}
+function revisarDuplicado() {
   const dup = abiertoConSerie(ch.serie);
   if (!dup) return ofrecerAnteriores();
   bot(`Atención: este equipo ya tiene un registro ${ESTADO_TXT[dup.estado]}, desde el ${fmt(dup.creado)}\nFalla registrada: ${dup.falla}`, "aviso");
@@ -497,7 +635,8 @@ function verRegistro(serie) {
   $("l-title").scrollIntoView({ behavior: "smooth" });
 }
 function ofrecerAnteriores() {
-  const prev = rows.find(r => r.serie.toLowerCase() === ch.serie.toLowerCase());
+  if (ch.desdeInventario) return pasoModelo();
+  const prev = rows.find(r => normSerie(r.serie) === normSerie(ch.serie));
   if (!prev) return pasoModelo();
   bot(`Encontré datos anteriores de este equipo:\nModelo: ${prev.modelo}\nEmpresa: ${prev.empresa}\nUbicación: ${prev.ubicacion}\n¿Desea usarlos?`);
   entrada(opciones([
@@ -506,15 +645,26 @@ function ofrecerAnteriores() {
   ]));
 }
 function pasoModelo() {
+  if (ch.modelo) return pasoEmpresa();
   bot("¿Cuál es el modelo del equipo?");
   pedirTexto({ ph: "Ej.: HP LaserJet M404", onOk: v => { ch.modelo = v; pasoEmpresa(); } });
 }
 function pasoEmpresa() {
+  if (ch.empresa) return pasoUbicacion();
   const emps = [...new Set(rows.map(r => r.empresa).filter(Boolean))].sort().slice(0, 8);
   bot(emps.length ? "¿A qué empresa proveedora se reporta? Elija una de la lista o escriba otra." : "¿A qué empresa proveedora se reporta?");
   pedirTexto({ ph: "Nombre de la empresa", sugerencias: emps, onOk: v => { ch.empresa = v; pasoUbicacion(); } });
 }
 function pasoUbicacion() {
+  if (ch.ubicacion) {
+    const u = ch.ubicacion;
+    bot(`¿El equipo sigue en ${u}?`);
+    entrada(opciones([
+      resp("Sí", pasoFalla, true),
+      resp("No, otra ubicación", () => { ch.ubicacion = ""; pasoUbicacion(); })
+    ]));
+    return;
+  }
   bot("¿Dónde está el equipo? Indique edificio, piso, oficina o box.");
   pedirTexto({ ph: "Ubicación física", onOk: v => { ch.ubicacion = v; pasoFalla(); } });
 }
@@ -553,7 +703,8 @@ async function enviarChat() {
   guardando = true;
   entrada(el("span", "msg", "Guardando reporte…"));
   try {
-    await guardarReporte({ ...ch }, fotoChat);
+    const { desdeInventario, ...datos } = ch;
+    await guardarReporte(datos, fotoChat);
     bot(`Reporte guardado como "pendiente de reportar". La jefatura lo verá en la lista y lo informará a ${ch.empresa}.`, "exito");
     entrada(opciones([{ t: "Reportar otro equipo", primario: true, f: iniciarChat }]));
   } catch (e) {
