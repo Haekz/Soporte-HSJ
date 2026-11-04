@@ -455,6 +455,11 @@ function buscarEnInventario(serie) {
   const series = (e) => [e.serie, e.serie_alt].filter(Boolean);
   const exacto = inventario.find(e => series(e).some(x => normSerie(x) === n)) || inventario.find(e => series(e).some(x => normSuave(x) === ns));
   if (exacto) return { exacto };
+  // Serie corta (3 a 5 caracteres): busca los equipos cuya serie termina así.
+  if (ns.length >= 3 && ns.length <= 5) {
+    const terminan = inventario.filter(e => series(e).some(x => normSuave(x).endsWith(ns)));
+    return { terminan, parecidos: [] };
+  }
   const tope = Math.max(1, Math.floor(ns.length / 4));
   const parecidos = inventario.map(e => {
     let d = Infinity;
@@ -595,8 +600,20 @@ async function escanear(file) {
 }
 function revisarSerie() {
   if (!inventario.length) return revisarDuplicado();
-  const { exacto, parecidos } = buscarEnInventario(ch.serie);
+  const { exacto, parecidos, terminan } = buscarEnInventario(ch.serie);
   if (exacto) return usarInventario(exacto);
+  if (terminan) {
+    const corta = ch.serie;
+    const reintentar = () => { bot("Escriba la serie completa o más caracteres del final."); pedirSerie(); };
+    if (!terminan.length) { bot(`No hay equipos en el inventario cuya serie termine en ${corta}.`, "aviso"); return reintentar(); }
+    if (terminan.length > 6) { bot(`Hay ${terminan.length} equipos cuya serie termina en ${corta}.`, "aviso"); return reintentar(); }
+    bot(terminan.length === 1 ? `Encontré este equipo con la serie terminada en ${corta}. ¿Es este?` : `Estos equipos tienen la serie terminada en ${corta}. ¿Cuál es?`);
+    entrada(opciones([
+      ...terminan.map(e => resp(`${e.serie} · ${[e.marca, e.modelo].filter(Boolean).join(" ")}${e.ubicacion ? " · " + e.ubicacion : ""}`, () => usarInventario(e), terminan.length === 1)),
+      resp("Ninguno", reintentar)
+    ]));
+    return;
+  }
   if (parecidos.length) {
     bot("No encontré esa serie exacta en el inventario. ¿Es alguna de estas?");
     entrada(opciones([
