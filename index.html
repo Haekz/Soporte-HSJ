@@ -634,6 +634,7 @@ function usarInventario(e) {
   const lineas = [["Serie", e.serie], ["Modelo", modelo], ["Empresa", e.empresa], ["Ubicación", e.ubicacion]].filter(([, x]) => x);
   bot("Equipo encontrado en el inventario:\n" + lineas.map(([k, x]) => `${k}: ${x}`).join("\n"));
   ch.desdeInventario = true;
+  ch.inv = { serie: e.serie, ubicacion: e.ubicacion || "" };
   revisarDuplicado();
 }
 function revisarDuplicado() {
@@ -720,8 +721,16 @@ async function enviarChat() {
   guardando = true;
   entrada(el("span", "msg", "Guardando reporte…"));
   try {
-    const { desdeInventario, ...datos } = ch;
+    const { desdeInventario, inv, ...datos } = ch;
     await guardarReporte(datos, fotoChat);
+    // Si el equipo cambió de lugar, actualiza también la ubicación en el inventario.
+    if (inv && datos.ubicacion && datos.ubicacion !== inv.ubicacion) {
+      const { error } = await sb.from("equipos").update({ ubicacion: datos.ubicacion }).eq("serie", inv.serie);
+      if (!error) {
+        const e = inventario.find(x => x.serie === inv.serie); if (e) e.ubicacion = datos.ubicacion;
+        bot(`También actualicé la ubicación del equipo en el inventario: ${datos.ubicacion}.`);
+      } else bot("No se pudo actualizar la ubicación en el inventario. El reporte sí quedó guardado.", "aviso");
+    }
     bot(`Reporte guardado como "pendiente de reportar". La jefatura lo verá en la lista y lo informará a ${ch.empresa}.`, "exito");
     entrada(opciones([{ t: "Reportar otro equipo", primario: true, f: iniciarChat }]));
   } catch (e) {
