@@ -4,6 +4,15 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Registro de fallas de equipos</title>
+<!-- App instalable (PWA) -->
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#1f5f8b">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Soporte HSJ">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32.png">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Public+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
 <style>
 /* Layout: formulario de ingreso arriba, bandeja de registros abajo con filtros por estado */
@@ -98,6 +107,12 @@ pre.out { white-space: pre-wrap; background: var(--bg); border: 1px solid var(--
 .enviar { display: flex; gap: 8px; align-items: flex-end; }
 .enviar input, .enviar textarea { flex: 1; min-width: 0; }
 .enviar textarea { min-height: 44px; }
+/* App instalada (PWA) */
+@media (display-mode: standalone) { .wrap { padding-top: max(20px, env(safe-area-inset-top, 0px)); } }
+.aviso { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; justify-content: space-between; background: var(--rep-bg); color: var(--fg); border: 1px solid var(--line); border-radius: 8px; padding: 10px 14px; font-size: .9rem; }
+.aviso.offline { background: var(--pend-bg); }
+.aviso p { margin: 0; flex: 1 1 220px; }
+.aviso .row { gap: 8px; }
 </style>
 </head>
 <body>
@@ -112,6 +127,21 @@ pre.out { white-space: pre-wrap; background: var(--bg); border: 1px solid var(--
       <button type="button" id="logout">Cerrar sesión</button>
     </div>
   </header>
+
+  <div class="aviso offline" id="avisoOffline" role="status" hidden>
+    <p>Sin conexión a internet. Los reportes no se pueden cargar ni guardar hasta recuperar la señal.</p>
+  </div>
+  <div class="aviso" id="avisoInstalar" hidden>
+    <p id="avisoInstalarTxt">Instale esta página como aplicación en su celular para abrirla desde un ícono.</p>
+    <div class="row">
+      <button type="button" class="primary" id="btnInstalar" hidden>Instalar</button>
+      <button type="button" id="btnNoInstalar">Ahora no</button>
+    </div>
+  </div>
+  <div class="aviso" id="avisoUpdate" role="status" hidden>
+    <p>Hay una versión nueva de la aplicación.</p>
+    <button type="button" class="primary" id="btnUpdate">Actualizar</button>
+  </div>
 
   <section class="panel login" id="loginPanel" aria-labelledby="login-title" hidden>
     <h2 id="login-title">Iniciar sesión</h2>
@@ -767,6 +797,63 @@ $("copyBtn").addEventListener("click", async () => {
   try { await navigator.clipboard.writeText(out.textContent); $("copyBtn").textContent = "Copiado"; setTimeout(() => $("copyBtn").textContent = "Copiar pendientes para correo", 1800); }
   catch { const s = window.getSelection(), rg = document.createRange(); rg.selectNodeContents(out); s.removeAllRanges(); s.addRange(rg); }
 });
+</script>
+<script>
+// ---------- App instalable (PWA) ----------
+(() => {
+  const g = (id) => document.getElementById(id);
+  const instalada = matchMedia("(display-mode: standalone)").matches || navigator.standalone === true;
+  const leer = (k) => { try { return localStorage.getItem(k); } catch { return null; } };
+  const guardar = (k, v) => { try { localStorage.setItem(k, v); } catch {} };
+
+  // Aviso sin conexión
+  const red = () => { g("avisoOffline").hidden = navigator.onLine; };
+  addEventListener("online", red); addEventListener("offline", red); red();
+
+  // Registro del service worker y aviso de versión nueva
+  if ("serviceWorker" in navigator) {
+    let recargando = false;
+    const habiaControl = !!navigator.serviceWorker.controller; // en la primera visita no se recarga
+    navigator.serviceWorker.addEventListener("controllerchange", () => {
+      if (recargando || !habiaControl) return; recargando = true; location.reload();
+    });
+    addEventListener("load", () => {
+      navigator.serviceWorker.register("sw.js").then((reg) => {
+        const avisar = (w) => { if (w && navigator.serviceWorker.controller) { g("avisoUpdate").hidden = false; g("btnUpdate").onclick = () => w.postMessage("activar"); } };
+        if (reg.waiting) avisar(reg.waiting);
+        reg.addEventListener("updatefound", () => {
+          const w = reg.installing;
+          w && w.addEventListener("statechange", () => { if (w.state === "installed") avisar(w); });
+        });
+        // Revisar actualizaciones al volver a la app
+        document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") reg.update().catch(() => {}); });
+      }).catch(() => {});
+    });
+  }
+
+  // Botón "Instalar"
+  if (instalada || leer("pwa-no-instalar") === "1") return;
+  g("btnNoInstalar").onclick = () => { g("avisoInstalar").hidden = true; guardar("pwa-no-instalar", "1"); };
+  let prompt = null;
+  addEventListener("beforeinstallprompt", (e) => {
+    e.preventDefault(); prompt = e;
+    g("btnInstalar").hidden = false; g("avisoInstalar").hidden = false;
+  });
+  g("btnInstalar").onclick = async () => {
+    if (!prompt) return;
+    prompt.prompt();
+    await prompt.userChoice.catch(() => {});
+    prompt = null; g("avisoInstalar").hidden = true;
+  };
+  addEventListener("appinstalled", () => { g("avisoInstalar").hidden = true; });
+
+  // iPhone/iPad: Safari no tiene botón automático, se explica el paso manual
+  const ios = /iphone|ipad|ipod/i.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+  if (ios) {
+    g("avisoInstalarTxt").textContent = "Para instalarla como aplicación: toque Compartir (el cuadrado con flecha) y luego \"Agregar a inicio\".";
+    g("avisoInstalar").hidden = false;
+  }
+})();
 </script>
 </body>
 </html>
