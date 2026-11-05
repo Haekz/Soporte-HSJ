@@ -1,0 +1,49 @@
+# Configuración de Caddy para servir Soporte HSJ desde el PC local con HTTPS.
+# Copie este archivo a C:\SoporteHSJ\caddy\Caddyfile y cambie los 2 valores marcados con <<< >>>.
+# El archivo copiado contiene el token de DuckDNS: NO lo suba a GitHub.
+
+<<<su-nombre>>>.duckdns.org {
+
+	# Certificado HTTPS gratuito de Let's Encrypt, validado por DNS (DuckDNS).
+	# Funciona aunque la IP sea interna del hospital y sin abrir el puerto 80 a internet.
+	tls {
+		dns duckdns <<<TOKEN-DE-DUCKDNS>>>
+	}
+
+	# Carpeta donde está la copia del repositorio (git clone).
+	root * C:/SoporteHSJ/web
+
+	# Nunca entregar archivos internos: historial de git, guías, SQL, planillas ni esta carpeta.
+	@privado {
+		path /.git /.git/* /.github/* /servidor/* /supabase/*
+		path *.md *.sql *.csv *.xlsx *.xlsb *.bat *.ps1 *.map
+	}
+	respond @privado 404
+
+	encode zstd gzip
+	file_server
+
+	header {
+		# Obliga a usar siempre HTTPS (1 año)
+		Strict-Transport-Security "max-age=31536000"
+		# Misma política que index.html, más la prohibición de mostrar la página dentro de otro sitio
+		Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' blob: data: https://*.supabase.co; connect-src 'self' https://*.supabase.co wss://*.supabase.co https://fonts.googleapis.com https://fonts.gstatic.com; worker-src 'self'; manifest-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
+		X-Frame-Options "DENY"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		Permissions-Policy "camera=(self), microphone=(), geolocation=(), payment=()"
+		# No anunciar qué servidor se usa
+		-Server
+	}
+
+	# El service worker y la página se revisan siempre (así las actualizaciones llegan al instante)
+	@siempre_fresco path /sw.js /index.html / /config.js /app.js /pwa.js
+	header @siempre_fresco Cache-Control "no-cache"
+
+	log {
+		output file C:/SoporteHSJ/caddy/acceso.log {
+			roll_size 10MiB
+			roll_keep 5
+		}
+	}
+}
