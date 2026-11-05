@@ -1,15 +1,16 @@
 // Service worker de la app "Soporte HSJ".
 // - Archivos propios (index.html, config.js, íconos): primero la red, y si no hay conexión, la copia guardada.
 //   Así cada cambio subido a GitHub llega solo, sin tener que borrar nada en el celular.
-// - Librerías externas (Supabase JS, lector de códigos, fuentes): se guardan para abrir más rápido.
+// - Librerías (Supabase JS, lector de códigos) se sirven desde la carpeta vendor/ del mismo sitio.
+// - Fuentes de Google: se guardan para abrir más rápido.
 // - Las consultas a Supabase (datos, fotos, sesión) NUNCA se guardan: siempre van directo a la base.
-const VERSION = "v1";
+const VERSION = "v2";
 const CACHE = "soporte-hsj-" + VERSION;
 const BASE = [
-  "./", "./index.html", "./config.js", "./manifest.webmanifest",
+  "./", "./index.html", "./config.js", "./app.js", "./pwa.js", "./vendor/supabase-2.45.4.js", "./manifest.webmanifest",
   "./icons/icon-192.png", "./icons/icon-512.png", "./icons/apple-touch-icon.png", "./icons/favicon-32.png"
 ];
-const EXTERNOS = ["cdn.jsdelivr.net", "fonts.googleapis.com", "fonts.gstatic.com"];
+const EXTERNOS = ["fonts.googleapis.com", "fonts.gstatic.com"];
 
 self.addEventListener("install", (e) => {
   // La primera instalación se activa de inmediato; una versión nueva espera a que el usuario toque "Actualizar".
